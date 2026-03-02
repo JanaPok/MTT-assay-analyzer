@@ -263,30 +263,6 @@ def main():
         st.markdown(color_table_html(colors, dist_df), unsafe_allow_html=True)
         st.caption("Číslo v každé buňce = euklidovská vzdálenost RGB od jamky v řádku A (stejný sloupec). Řádek A = reference (hodnota 0).")
 
-        # Čistá numerická tabulka
-        st.subheader("Numerická tabulka vzdáleností")
-        st.dataframe(dist_df.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
-
-        # Export CSV
-        st.subheader("Export")
-        csv = dist_df.to_csv(index=True).encode("utf-8")
-        st.download_button(
-            label="⬇️ Stáhnout jako CSV",
-            data=csv,
-            file_name="microtiter_distances.csv",
-            mime="text/csv"
-        )
-
-        # Volitelně: raw RGB hodnoty
-        with st.expander("🔬 Zobrazit průměrné RGB hodnoty každé jamky"):
-            for ch_idx, ch_name in enumerate(["R", "G", "B"]):
-                channel_df = pd.DataFrame(
-                    colors[:, :, ch_idx].astype(int),
-                    index=ROWS,
-                    columns=[str(c) for c in COLS]
-                )
-                st.write(f"**Kanál {ch_name}**")
-                st.dataframe(channel_df, use_container_width=True)
 
 
 if __name__ == "__main__":
