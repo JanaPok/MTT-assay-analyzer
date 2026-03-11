@@ -427,52 +427,44 @@ def export_inverted_excel(gray_df: pd.DataFrame) -> bytes:
 def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
     """
     Create a formatted Excel workbook with the Euclidean distance table.
-    Each cell background reflects the actual well color; the value is the distance
-    from the luminance-weighted row-A reference RGB vector.
-    The minimum value per column (rows B–H) is bold and underlined.
+    Structure mirrors the grayscale export: column headers in row 1, data from row 2.
+    Each cell background reflects the actual well colour.
+    Row A cells have a red border; the minimum per column (B–H) is bold and underlined.
     """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Euclidean distances"
 
-    thin   = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    thin      = Side(style="thin",   color="CCCCCC")
     thick_red = Side(style="medium", color="EE0000")
-    border_ref = Border(left=thick_red, right=thick_red,
-                        top=thick_red, bottom=thick_red)
+    border_std = Border(left=thin,      right=thin,      top=thin,      bottom=thin)
+    border_ref = Border(left=thick_red, right=thick_red, top=thick_red, bottom=thick_red)
 
-    # Reference info in top rows
-    r_ref, g_ref, b_ref = ref_rgb.astype(int)
-    ws.cell(row=1, column=1,
-            value=f"Reference (row A luminance-weighted mean): R={r_ref} G={g_ref} B={b_ref}")
-    ws.cell(row=1, column=1).font = Font(bold=True, italic=True)
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS + 1)
-
-    # Column headers
-    ws.cell(row=2, column=1, value="")
+    # ── Column headers (row 1) ─────────────────────────────────────────────────
+    ws.cell(row=1, column=1, value="")
     for c_idx, c_label in enumerate(COLS):
-        cell = ws.cell(row=2, column=c_idx + 2, value=c_label)
+        cell = ws.cell(row=1, column=c_idx + 2, value=c_label)
         cell.font      = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
-        cell.border    = border
+        cell.border    = border_std
 
-    # Find minimum per column (rows B–H)
+    # ── Find minimum per column (rows B–H only) ────────────────────────────────
     col_min_row = {}
     for c_idx in range(N_COLS):
         col_vals = dist_df.iloc[1:, c_idx]
-        col_min_row[c_idx] = col_vals.values.argmin() + 1
+        col_min_row[c_idx] = col_vals.values.argmin() + 1  # +1 to offset skipped row A
 
-    # Data rows
+    # ── Data rows (rows 2–9) ───────────────────────────────────────────────────
     for r_idx, row_label in enumerate(ROWS):
-        hdr = ws.cell(row=r_idx + 3, column=1, value=row_label)
+        hdr = ws.cell(row=r_idx + 2, column=1, value=row_label)
         hdr.font      = Font(bold=True)
         hdr.alignment = Alignment(horizontal="center")
-        hdr.border    = border
+        hdr.border    = border_std
 
         for c_idx in range(N_COLS):
             rgb  = colors[r_idx, c_idx].astype(int)
             dist = round(float(dist_df.iloc[r_idx, c_idx]), 1)
-            cell = ws.cell(row=r_idx + 3, column=c_idx + 2, value=dist)
+            cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=dist)
 
             # Background = actual well colour
             hex_col = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
@@ -480,25 +472,28 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
 
             # Text colour based on luminance
             lum = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
+            is_min = (r_idx == col_min_row[c_idx])
             cell.font = Font(
                 color="000000" if lum > 128 else "FFFFFF",
-                bold=(r_idx == col_min_row[c_idx]),
-                underline="single" if r_idx == col_min_row[c_idx] else None
+                bold=is_min,
+                underline="single" if is_min else None
             )
             cell.alignment = Alignment(horizontal="center")
-            cell.border    = border_ref if r_idx == 0 else border
+            cell.border    = border_ref if r_idx == 0 else border_std
 
-    # Column widths
+    # ── Column widths ──────────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 5
     for c_idx in range(N_COLS):
         ws.column_dimensions[get_column_letter(c_idx + 2)].width = 7
 
-    # Metadata sheet
+    # ── Metadata sheet ─────────────────────────────────────────────────────────
+    r_ref, g_ref, b_ref = ref_rgb.astype(int)
     ws_meta = wb.create_sheet("Info")
     ws_meta.append(["Microtiter Plate Analyzer — Euclidean distance export"])
     ws_meta.append(["Reference = luminance-weighted mean RGB of all 12 row-A wells"])
-    ws_meta.append([f"Reference RGB: R={r_ref} G={g_ref} B={b_ref}"])
+    ws_meta.append([f"Reference RGB: R={r_ref}  G={g_ref}  B={b_ref}"])
     ws_meta.append(["Distance = sqrt((R1-R2)² + (G1-G2)² + (B1-B2)²)"])
+    ws_meta.append(["Red border = row A (reference row)"])
     ws_meta.append(["Bold + underline = minimum distance per column (most similar to reference)"])
 
     buf = io.BytesIO()
