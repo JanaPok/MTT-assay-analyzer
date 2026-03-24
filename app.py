@@ -424,28 +424,29 @@ def export_inverted_excel(gray_df: pd.DataFrame) -> bytes:
     return buf.getvalue()
 
 
-def build_absorbance(img_orig: Image.Image, grid: np.ndarray) -> pd.DataFrame:
+def build_absorbance(img_orig: Image.Image, grid: np.ndarray,
+                     blank_row_idx: int = 0) -> pd.DataFrame:
     """
-    Compute approximate absorbance for each well using the universal algorithm:
+    Compute approximate absorbance for each well using a global blank reference.
 
-        gray_blank = mean of the brightest 10 % of pixels within the well region
-        gray_mean  = mean of all pixels within the well region
+    The blank is estimated as the mean grayscale intensity of all 12 wells in the
+    selected blank row. This represents unabsorbed light, analogous to the blank
+    cuvette in a spectrophotometer.
+
+        gray_blank = mean of all blank-row well intensities
+        gray_mean  = mean of all pixels in the 11×11 px region of each well
         k          = 1.0 + 0.5 × (1 - gray_blank / 255)²   (nonlinearity correction)
         A          = -log10(gray_mean / gray_blank) × k
 
-    gray_blank acts as a per-well blank reference (the brightest pixels represent
-    the unabsorbed light passing through the lightest part of the well).
-    The k factor compensates for the power-law (gamma) nonlinearity of smartphone
-    JPEG imaging and sensor saturation at high absorbances.
-
     Returns a DataFrame (8×12) of absorbance values rounded to 4 decimal places.
-    NaN is returned for wells where gray_mean >= gray_blank (no absorbance / blank).
+    Wells lighter than the blank are set to 0.
     """
     img_gray   = img_orig.convert("L")
     gray_array = np.array(img_gray, dtype=float)
     h, w       = gray_array.shape
-    values     = np.zeros((N_ROWS, N_COLS), dtype=float)
 
+    # First pass: collect mean intensity for all wells
+    means = np.zeros((N_ROWS, N_COLS), dtype=float)
     for r in range(N_ROWS):
         for c in range(N_COLS):
             x, y = grid[r, c]
@@ -453,19 +454,21 @@ def build_absorbance(img_orig: Image.Image, grid: np.ndarray) -> pd.DataFrame:
             x1 = min(w, int(x) + SAMPLE_RADIUS + 1)
             y0 = max(0, int(y) - SAMPLE_RADIUS)
             y1 = min(h, int(y) + SAMPLE_RADIUS + 1)
-            patch = gray_array[y0:y1, x0:x1].flatten()
+            means[r, c] = gray_array[y0:y1, x0:x1].mean()
 
-            gray_mean = patch.mean()
+    # Global blank = mean intensity of the selected blank row
+    gray_blank = means[blank_row_idx, :].mean()
 
-            # Brightest 10 % of pixels as per-well blank estimate
-            n_top      = max(1, int(len(patch) * 0.10))
-            gray_blank = np.partition(patch, -n_top)[-n_top:].mean()
-
-            if gray_blank <= 0 or gray_mean >= gray_blank:
-                values[r, c] = 0.0
+    # Compute absorbance relative to global blank
+    k      = 1.0 + 0.5 * ((1 - gray_blank / 255) ** 2)
+    values = np.zeros((N_ROWS, N_COLS), dtype=float)
+    for r in range(N_ROWS):
+        for c in range(N_COLS):
+            gm = means[r, c]
+            if gray_blank > 0 and gm < gray_blank:
+                values[r, c] = -math.log10(gm / gray_blank) * k
             else:
-                k            = 1.0 + 0.5 * ((1 - gray_blank / 255) ** 2)
-                values[r, c] = -math.log10(gray_mean / gray_blank) * k
+                values[r, c] = 0.0
 
     return pd.DataFrame(
         np.round(values, 4),
@@ -557,11 +560,11 @@ def export_absorbance_excel(abs_df: pd.DataFrame) -> bytes:
     # Metadata sheet
     ws_meta = wb.create_sheet("Info")
     ws_meta.append(["Microtiter Plate Analyzer — estimated absorbance export"])
-    ws_meta.append(["Algorithm: universal power-law corrected absorbance (no calibration standards)"])
-    ws_meta.append(["gray_blank = mean of brightest 10 % pixels within each well (11×11 px region)"])
-    ws_meta.append(["gray_mean  = mean of all pixels within each well"])
-    ws_meta.append(["k = 1.0 + 0.5 × (1 - gray_blank/255)²   (nonlinearity correction)"])
+    ws_meta.append(["Blank reference = mean grayscale intensity of all 12 row-A wells"])
+    ws_meta.append(["gray_mean = mean of all pixels in the 11×11 px well region"])
+    ws_meta.append(["k = 1.0 + 0.5 × (1 - gray_blank/255)²  (smartphone gamma correction)"])
     ws_meta.append(["A = -log10(gray_mean / gray_blank) × k"])
+    ws_meta.append(["Wells lighter than blank → A = 0"])
     ws_meta.append(["Background colour: white = A≈0, black = A≥2"])
 
     buf = io.BytesIO()
@@ -842,16 +845,25 @@ def main():
 
         # ── Estimated absorbance table ─────────────────────────────────────────
         st.markdown("### 7️⃣ Estimated absorbance per well")
+
+        # Blank row selector
+        blank_row_label = st.selectbox(
+            "Blank row (lightest row = unabsorbed light reference)",
+            options=ROWS,
+            index=0,
+            key="blank_row"
+        )
+        blank_row_idx = ROWS.index(blank_row_label)
+
         st.caption(
-            "Approximate absorbance computed from pixel intensities using a universal "
-            "power-law corrected algorithm (no calibration standards required). "
+            f"Blank reference = mean grayscale intensity of all 12 wells in row **{blank_row_label}**. "
             "Formula: **A = −log₁₀(gray_mean / gray_blank) × k**, where "
-            "gray_blank = mean of the brightest 10 % pixels in the well (per-well blank estimate) "
-            "and k = 1.0 + 0.5 × (1 − gray_blank/255)² corrects for smartphone gamma nonlinearity. "
+            "k = 1.0 + 0.5 × (1 − gray_blank/255)² corrects for smartphone gamma nonlinearity. "
+            "Wells lighter than the blank are set to 0. "
             "Background shade: white ≈ 0, black ≥ 2."
         )
 
-        abs_df = build_absorbance(img_orig, grid)
+        abs_df = build_absorbance(img_orig, grid, blank_row_idx)
         st.markdown(absorbance_table_html(abs_df), unsafe_allow_html=True)
 
         abs_xlsx = export_absorbance_excel(abs_df)
