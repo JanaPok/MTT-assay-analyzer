@@ -424,6 +424,151 @@ def export_inverted_excel(gray_df: pd.DataFrame) -> bytes:
     return buf.getvalue()
 
 
+def build_absorbance(img_orig: Image.Image, grid: np.ndarray) -> pd.DataFrame:
+    """
+    Compute approximate absorbance for each well using the universal algorithm:
+
+        gray_blank = mean of the brightest 10 % of pixels within the well region
+        gray_mean  = mean of all pixels within the well region
+        k          = 1.0 + 0.5 × (1 - gray_blank / 255)²   (nonlinearity correction)
+        A          = -log10(gray_mean / gray_blank) × k
+
+    gray_blank acts as a per-well blank reference (the brightest pixels represent
+    the unabsorbed light passing through the lightest part of the well).
+    The k factor compensates for the power-law (gamma) nonlinearity of smartphone
+    JPEG imaging and sensor saturation at high absorbances.
+
+    Returns a DataFrame (8×12) of absorbance values rounded to 4 decimal places.
+    NaN is returned for wells where gray_mean >= gray_blank (no absorbance / blank).
+    """
+    img_gray   = img_orig.convert("L")
+    gray_array = np.array(img_gray, dtype=float)
+    h, w       = gray_array.shape
+    values     = np.zeros((N_ROWS, N_COLS), dtype=float)
+
+    for r in range(N_ROWS):
+        for c in range(N_COLS):
+            x, y = grid[r, c]
+            x0 = max(0, int(x) - SAMPLE_RADIUS)
+            x1 = min(w, int(x) + SAMPLE_RADIUS + 1)
+            y0 = max(0, int(y) - SAMPLE_RADIUS)
+            y1 = min(h, int(y) + SAMPLE_RADIUS + 1)
+            patch = gray_array[y0:y1, x0:x1].flatten()
+
+            gray_mean = patch.mean()
+
+            # Brightest 10 % of pixels as per-well blank estimate
+            n_top      = max(1, int(len(patch) * 0.10))
+            gray_blank = np.partition(patch, -n_top)[-n_top:].mean()
+
+            if gray_blank <= 0 or gray_mean >= gray_blank:
+                values[r, c] = 0.0
+            else:
+                k            = 1.0 + 0.5 * ((1 - gray_blank / 255) ** 2)
+                values[r, c] = -math.log10(gray_mean / gray_blank) * k
+
+    return pd.DataFrame(
+        np.round(values, 4),
+        index=ROWS,
+        columns=[str(c) for c in COLS]
+    )
+
+
+def absorbance_table_html(abs_df: pd.DataFrame) -> str:
+    """
+    Build an HTML table displaying estimated absorbance values.
+    Higher absorbance = darker background (maps A to a gray shade for visual cue).
+    Values are shown to 4 decimal places.
+    """
+    # Map absorbance to a gray shade: A=0 → white (255), A≥2 → black (0)
+    def a_to_gray(a):
+        return max(0, int(255 * (1 - min(a, 2.0) / 2.0)))
+
+    html  = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
+    html += '<table style="border-collapse:collapse;font-size:11px;min-width:480px;">'
+    html += "<tr><th style='padding:3px 4px;'></th>"
+    for c in COLS:
+        html += f"<th style='padding:3px 4px;text-align:center;'>{c}</th>"
+    html += "</tr>"
+    for r_idx, row_label in enumerate(ROWS):
+        html += f"<tr><td style='padding:3px 4px;font-weight:bold;'>{row_label}</td>"
+        for c_idx in range(N_COLS):
+            a  = float(abs_df.iloc[r_idx, c_idx])
+            g  = a_to_gray(a)
+            bg = f"rgb({g},{g},{g})"
+            fg = "#000" if g > 128 else "#fff"
+            html += (f"<td style='background:{bg};color:{fg};padding:4px 3px;"
+                     f"text-align:center;border:1px solid #ccc;min-width:42px;'>"
+                     f"{a:.4f}</td>")
+        html += "</tr>"
+    html += "</table></div>"
+    return html
+
+
+def export_absorbance_excel(abs_df: pd.DataFrame) -> bytes:
+    """
+    Create a formatted Excel workbook with the estimated absorbance table.
+    Cell background maps absorbance to a gray shade (A=0 → white, A≥2 → black).
+    Returns the workbook as bytes.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Estimated absorbance"
+
+    thin   = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def a_to_hex(a):
+        g   = max(0, int(255 * (1 - min(a, 2.0) / 2.0)))
+        hx  = f"{g:02X}"
+        return hx * 3
+
+    # Column headers
+    ws.cell(row=1, column=1, value="")
+    for c_idx, c_label in enumerate(COLS):
+        cell = ws.cell(row=1, column=c_idx + 2, value=c_label)
+        cell.font      = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border    = border
+
+    # Data rows
+    for r_idx, row_label in enumerate(ROWS):
+        hdr = ws.cell(row=r_idx + 2, column=1, value=row_label)
+        hdr.font      = Font(bold=True)
+        hdr.alignment = Alignment(horizontal="center")
+        hdr.border    = border
+
+        for c_idx in range(N_COLS):
+            a    = float(abs_df.iloc[r_idx, c_idx])
+            cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=round(a, 4))
+
+            hex_col       = a_to_hex(a)
+            cell.fill     = PatternFill("solid", fgColor=hex_col)
+            g_int         = int(hex_col[:2], 16)
+            cell.font     = Font(color="000000" if g_int > 128 else "FFFFFF")
+            cell.alignment = Alignment(horizontal="center")
+            cell.border   = border
+
+    # Column widths
+    ws.column_dimensions["A"].width = 5
+    for c_idx in range(N_COLS):
+        ws.column_dimensions[get_column_letter(c_idx + 2)].width = 9
+
+    # Metadata sheet
+    ws_meta = wb.create_sheet("Info")
+    ws_meta.append(["Microtiter Plate Analyzer — estimated absorbance export"])
+    ws_meta.append(["Algorithm: universal power-law corrected absorbance (no calibration standards)"])
+    ws_meta.append(["gray_blank = mean of brightest 10 % pixels within each well (11×11 px region)"])
+    ws_meta.append(["gray_mean  = mean of all pixels within each well"])
+    ws_meta.append(["k = 1.0 + 0.5 × (1 - gray_blank/255)²   (nonlinearity correction)"])
+    ws_meta.append(["A = -log10(gray_mean / gray_blank) × k"])
+    ws_meta.append(["Background colour: white = A≈0, black = A≥2"])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
     """
     Create a formatted Excel workbook with the Euclidean distance table.
@@ -692,6 +837,28 @@ def main():
             label="⬇️ Download pseudo-absorbance table (Excel)",
             data=inv_xlsx_bytes,
             file_name="microtiter_pseudoabsorbance.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # ── Estimated absorbance table ─────────────────────────────────────────
+        st.markdown("### 7️⃣ Estimated absorbance per well")
+        st.caption(
+            "Approximate absorbance computed from pixel intensities using a universal "
+            "power-law corrected algorithm (no calibration standards required). "
+            "Formula: **A = −log₁₀(gray_mean / gray_blank) × k**, where "
+            "gray_blank = mean of the brightest 10 % pixels in the well (per-well blank estimate) "
+            "and k = 1.0 + 0.5 × (1 − gray_blank/255)² corrects for smartphone gamma nonlinearity. "
+            "Background shade: white ≈ 0, black ≥ 2."
+        )
+
+        abs_df = build_absorbance(img_orig, grid)
+        st.markdown(absorbance_table_html(abs_df), unsafe_allow_html=True)
+
+        abs_xlsx = export_absorbance_excel(abs_df)
+        st.download_button(
+            label="⬇️ Download absorbance table (Excel)",
+            data=abs_xlsx,
+            file_name="microtiter_absorbance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
