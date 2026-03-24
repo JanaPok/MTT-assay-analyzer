@@ -184,15 +184,8 @@ def color_table_html(colors, dist_df, ref_rgb) -> str:
     """
     Build an HTML table where each cell background reflects the actual well color.
     Cell value = Euclidean RGB distance from the single row-A reference vector.
-    The minimum value in each column (rows B–H) is bold and underlined.
     Row A is highlighted with a red border to mark it as the reference row.
     """
-    # Find the row index of the minimum distance per column (rows B–H only)
-    col_min_row = {}
-    for c_idx in range(N_COLS):
-        col_vals = dist_df.iloc[1:, c_idx]
-        col_min_row[c_idx] = col_vals.values.argmin() + 1  # +1 to offset the skipped row A
-
     # Reference colour swatch for display
     r_ref, g_ref, b_ref = ref_rgb.astype(int)
     lum_ref = 0.299*r_ref + 0.587*g_ref + 0.114*b_ref
@@ -215,15 +208,14 @@ def color_table_html(colors, dist_df, ref_rgb) -> str:
     for r_idx, row_label in enumerate(ROWS):
         html += f"<tr><td style='padding:3px 4px;font-weight:bold;'>{row_label}</td>"
         for c_idx in range(N_COLS):
-            rgb  = colors[r_idx, c_idx].astype(int)
-            dist = dist_df.iloc[r_idx, c_idx]
-            bg   = f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
-            lum  = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
-            fg   = "#000" if lum > 128 else "#fff"
-            border    = "2px solid #e00" if r_idx == 0 else "1px solid #ccc"
-            val_style = "font-weight:900;text-decoration:underline;" if r_idx == col_min_row[c_idx] else ""
+            rgb    = colors[r_idx, c_idx].astype(int)
+            dist   = dist_df.iloc[r_idx, c_idx]
+            bg     = f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+            lum    = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
+            fg     = "#000" if lum > 128 else "#fff"
+            border = "2px solid #e00" if r_idx == 0 else "1px solid #ccc"
             html += (f"<td style='background:{bg};color:{fg};padding:4px 3px;"
-                     f"text-align:center;border:{border};min-width:36px;{val_style}'>"
+                     f"text-align:center;border:{border};min-width:36px;'>"
                      f"{dist:.1f}</td>")
         html += "</tr>"
     html += "</table></div>"
@@ -600,10 +592,7 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
         cell.border    = border_std
 
     # ── Find minimum per column (rows B–H only) ────────────────────────────────
-    col_min_row = {}
-    for c_idx in range(N_COLS):
-        col_vals = dist_df.iloc[1:, c_idx]
-        col_min_row[c_idx] = col_vals.values.argmin() + 1  # +1 to offset skipped row A
+    # (kept for metadata info only, no longer used for cell formatting)
 
     # ── Data rows (rows 2–9) ───────────────────────────────────────────────────
     for r_idx, row_label in enumerate(ROWS):
@@ -623,12 +612,7 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
 
             # Text colour based on luminance
             lum = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
-            is_min = (r_idx == col_min_row[c_idx])
-            cell.font = Font(
-                color="000000" if lum > 128 else "FFFFFF",
-                bold=is_min,
-                underline="single" if is_min else None
-            )
+            cell.font      = Font(color="000000" if lum > 128 else "FFFFFF")
             cell.alignment = Alignment(horizontal="center")
             cell.border    = border_ref if r_idx == 0 else border_std
 
@@ -646,7 +630,6 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
     ws_meta.append(["Distance = sqrt((R1-R2)² + (G1-G2)² + (B1-B2)²)"])
     ws_meta.append(["Red border = row A (reference row)"])
     ws_meta.append(["Bold + underline = minimum distance per column (most similar to reference)"])
-
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -854,7 +837,7 @@ def main():
         st.markdown("### 4️⃣ Euclidean distances from row A reference")
         st.markdown(color_table_html(colors, dist_df, ref_rgb), unsafe_allow_html=True)
         st.caption("Each cell = Euclidean RGB distance from the luminance-weighted mean RGB of row A (all 12 wells). "
-                   "Row A border = reference row. Bold + underline = most similar to reference in that column.")
+                   "Row A border = reference row.")
 
         dist_xlsx = export_distances_excel(colors, dist_df, ref_rgb)
         st.download_button(
