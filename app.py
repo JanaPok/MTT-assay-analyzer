@@ -637,7 +637,7 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
 
 # Known correction factors per camera brand (empirical values)
 CAMERA_K = {
-    "apple":   2.8,   # iPhone 13–16 / Air
+    "apple":   3,   # iPhone 13–16 / Air
     "samsung": 2.4,
     "google":  3.5,   # Pixel
     "xiaomi":  2.2,
