@@ -312,7 +312,7 @@ def export_grayscale_excel(gray_df: pd.DataFrame, img_orig: Image.Image,
             # Gray fill — openpyxl expects a 6-digit hex colour string
             hex_g  = f"{g:02X}"
             hex_col = hex_g * 3          # e.g. "7F7F7F"
-            cell.fill      = PatternFill("solid", fgColor=hex_col)
+            cell.fill      = PatternFill("solid", fgColor="FF" + hex_col)
             cell.font      = Font(color="000000" if g > 128 else "FFFFFF")
             cell.alignment = Alignment(horizontal="center")
             cell.border    = border
@@ -394,7 +394,7 @@ def export_inverted_excel(gray_df: pd.DataFrame) -> bytes:
             cell   = ws.cell(row=r_idx + 2, column=c_idx + 2, value=g_inv)
             hex_g  = f"{g_inv:02X}"
             hex_col = hex_g * 3
-            cell.fill      = PatternFill("solid", fgColor=hex_col)
+            cell.fill      = PatternFill("solid", fgColor="FF" + hex_col)
             cell.font      = Font(color="000000" if g_inv > 128 else "FFFFFF")
             cell.alignment = Alignment(horizontal="center")
             cell.border    = border
@@ -604,7 +604,7 @@ def export_channel_absorbance_excel(abs_df: pd.DataFrame, channel: int,
             a    = float(abs_df.iloc[r_idx, c_idx])
             cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=round(a, 4))
             hex_col       = a_to_hex(a)
-            cell.fill     = PatternFill("solid", fgColor=hex_col)
+            cell.fill     = PatternFill("solid", fgColor="FF" + hex_col)
             r2, g2, b2    = int(hex_col[0:2],16), int(hex_col[2:4],16), int(hex_col[4:6],16)
             lum           = 0.299*r2 + 0.587*g2 + 0.114*b2
             cell.font     = Font(color="000000" if lum > 128 else "FFFFFF")
@@ -697,7 +697,7 @@ def export_absorbance_excel(abs_df: pd.DataFrame) -> bytes:
             cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=round(a, 4))
 
             hex_col       = a_to_hex(a)
-            cell.fill     = PatternFill("solid", fgColor=hex_col)
+            cell.fill     = PatternFill("solid", fgColor="FF" + hex_col)
             g_int         = int(hex_col[:2], 16)
             cell.font     = Font(color="000000" if g_int > 128 else "FFFFFF")
             cell.alignment = Alignment(horizontal="center")
@@ -764,7 +764,7 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
 
             # Background = actual well colour
             hex_col = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
-            cell.fill = PatternFill("solid", fgColor=hex_col)
+            cell.fill = PatternFill("solid", fgColor="FF" + hex_col)
 
             # Text colour based on luminance
             lum = 0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]
