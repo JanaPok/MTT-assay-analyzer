@@ -881,9 +881,8 @@ def k_from_exif(uploaded_file) -> tuple[float, str]:
 
 
 # ── Dye definitions ────────────────────────────────────────────────────────────
-# Each dye: (display_name, lambda_max_nm, w_R, w_G, w_B)
-# Weights reflect overlap of dye absorption spectrum with camera RGB sensitivity.
-# Higher weight = that channel carries more of the absorbance signal.
+# Each entry: (lambda_max_nm, w_R, w_G, w_B)
+# Weights = which channel best captures the dye's absorbance.
 DYES = {
     "Eosin (~490 nm)":          (490,  0.05, 0.35, 0.60),
     "Hemoglobin (~540 nm)":     (540,  0.10, 0.75, 0.15),
@@ -895,45 +894,39 @@ DYES = {
 
 def weights_from_lambda(lam_nm: int) -> tuple[float, float, float]:
     """
-    Estimate RGB channel weights from a dye's absorption peak wavelength
-    using a Gaussian model of camera channel sensitivity:
-      - Red   centred ~620 nm, σ ~80 nm
-      - Green centred ~540 nm, σ ~60 nm
-      - Blue  centred ~460 nm, σ ~60 nm
-    The weight for each channel is proportional to its sensitivity at lam_nm,
-    because a channel sensitive at lam_nm will show the strongest signal change.
-    Weights are normalised to sum to 1.
+    Estimate RGB weights from absorption peak using Gaussian camera sensitivity model:
+      Red ~620 nm σ80, Green ~540 nm σ60, Blue ~460 nm σ60.
     """
     def gauss(x, mu, sigma):
         return math.exp(-0.5 * ((x - mu) / sigma) ** 2)
-
     w_r = gauss(lam_nm, 620, 80)
     w_g = gauss(lam_nm, 540, 60)
     w_b = gauss(lam_nm, 460, 60)
-    total = w_r + w_g + w_b
-    if total == 0:
-        return 1/3, 1/3, 1/3
+    total = w_r + w_g + w_b or 1.0
     return round(w_r/total, 3), round(w_g/total, 3), round(w_b/total, 3)
 
 
 def build_absorbance_weighted(img_orig: Image.Image, grid: np.ndarray,
                                blank_row_idx: int,
                                w_r: float, w_g: float, w_b: float,
-                               k_override: float) -> pd.DataFrame:
+                               gamma: float = 2.2) -> pd.DataFrame:
     """
-    Compute absorbance using a weighted combination of R, G, B channel transmittances.
+    Compute absorbance using gamma-corrected weighted RGB transmittances.
 
-        T_R = ch_R_mean / ch_R_blank  (per channel, blank = selected blank row)
-        T_eff = (w_R×T_R + w_G×T_G + w_B×T_B) / (w_R + w_G + w_B)
-        A = -log10(T_eff) × k_override
+    Pipeline:
+      1. Linearise sRGB pixels:  I_lin = (pixel/255)^gamma
+      2. Per-channel transmittance vs blank row:  T_ch = I_lin / I_lin_blank
+      3. Weighted effective transmittance:  T_eff = Σ(w_ch × T_ch) / Σw_ch
+      4. A = -log10(T_eff)
 
-    This approach is more sensitive than grayscale or a single channel because
-    it weights each channel according to the dye's absorption spectrum.
-    Returns a DataFrame (8×12) rounded to 4 decimal places.
+    Gamma correction recovers the linear light-intensity scale from the
+    power-law-encoded JPEG, which is the main source of systematic underestimation.
+    Returns DataFrame (8×12) rounded to 4 dp.
     """
-    arr = np.array(img_orig.convert("RGB"), dtype=float)
-    h, w = arr.shape[:2]
-    means = np.zeros((N_ROWS, N_COLS, 3), dtype=float)
+    arr     = np.array(img_orig.convert("RGB"), dtype=float) / 255.0
+    arr_lin = np.power(np.clip(arr, 1e-9, 1.0), gamma)
+    h, w    = arr_lin.shape[:2]
+    means   = np.zeros((N_ROWS, N_COLS, 3), dtype=float)
 
     for r in range(N_ROWS):
         for c in range(N_COLS):
@@ -942,49 +935,65 @@ def build_absorbance_weighted(img_orig: Image.Image, grid: np.ndarray,
             x1 = min(w, int(x) + SAMPLE_RADIUS + 1)
             y0 = max(0, int(y) - SAMPLE_RADIUS)
             y1 = min(h, int(y) + SAMPLE_RADIUS + 1)
-            means[r, c] = arr[y0:y1, x0:x1].reshape(-1, 3).mean(axis=0)
+            means[r, c] = arr_lin[y0:y1, x0:x1].reshape(-1, 3).mean(axis=0)
 
-    # Per-channel blank = mean of blank row
-    blank_rgb = means[blank_row_idx, :, :].mean(axis=0)   # shape (3,)
+    blank_lin = means[blank_row_idx, :, :].mean(axis=0)
     w_sum     = w_r + w_g + w_b
+    values    = np.zeros((N_ROWS, N_COLS), dtype=float)
 
-    values = np.zeros((N_ROWS, N_COLS), dtype=float)
     for r in range(N_ROWS):
         for c in range(N_COLS):
-            rgb = means[r, c]
-            # Per-channel transmittance, clamped to (0, 1]
-            T = np.where(blank_rgb > 0, np.clip(rgb / blank_rgb, 1e-6, 1.0),
-                         np.ones(3))
-            T_eff = (w_r * T[0] + w_g * T[1] + w_b * T[2]) / w_sum
-            if T_eff < 1.0:
-                values[r, c] = -math.log10(T_eff) * k_override
-            else:
-                values[r, c] = 0.0
+            lin   = means[r, c]
+            T     = np.where(blank_lin > 0,
+                             np.clip(lin / blank_lin, 1e-9, 1.0),
+                             np.ones(3))
+            T_eff = (w_r*T[0] + w_g*T[1] + w_b*T[2]) / w_sum
+            values[r, c] = -math.log10(T_eff) if T_eff < 1.0 else 0.0
 
     return pd.DataFrame(np.round(values, 4), index=ROWS,
                         columns=[str(c) for c in COLS])
 
 
+def apply_calibration(raw_df: pd.DataFrame,
+                      cal_wells: list) -> tuple:
+    """
+    Linear calibration from well-specific reference values.
+
+    cal_wells: list of (row_label str, col int 1-based, A_reference float)
+               e.g. [('B', 1, 1.784), ('C', 1, 0.466)]
+               These must be non-blank wells with known plate-reader absorbance.
+
+    Fits A_cal = slope × A_raw + intercept (least squares).
+    Returns (calibrated_df, slope, intercept) or (raw_df, None, None) if < 2 points.
+    """
+    xs, ys = [], []
+    for row_lbl, col_1, a_ref in cal_wells:
+        if row_lbl in ROWS and 1 <= col_1 <= N_COLS:
+            a_raw = float(raw_df.iloc[ROWS.index(row_lbl), col_1 - 1])
+            if a_raw > 0 and a_ref > 0:
+                xs.append(a_raw)
+                ys.append(a_ref)
+
+    if len(xs) < 2:
+        return raw_df, None, None
+
+    coeffs           = np.polyfit(np.array(xs), np.array(ys), 1)
+    slope, intercept = float(coeffs[0]), float(coeffs[1])
+    cal              = raw_df.copy()
+    cal.iloc[:, :]   = np.clip(raw_df.values * slope + intercept, 0, None)
+    return cal.round(4), slope, intercept
+
+
 def weighted_absorbance_table_html(abs_df: pd.DataFrame,
                                    w_r: float, w_g: float, w_b: float) -> str:
-    """
-    HTML table for weighted-channel absorbance.
-    Cell background is a blend of RGB tints proportional to channel weights,
-    darkened by absorbance value.
-    """
-    # Base tint = weighted blend of R/G/B tint colours
-    base_r = int(255 * w_r + 200 * w_g + 200 * w_b)
-    base_g = int(200 * w_r + 255 * w_g + 200 * w_b)
-    base_b = int(200 * w_r + 200 * w_g + 255 * w_b)
-    base_r = min(255, base_r)
-    base_g = min(255, base_g)
-    base_b = min(255, base_b)
+    """HTML table with colour tint proportional to channel weights, darkened by A."""
+    base_r = min(255, int(255*w_r + 200*w_g + 200*w_b))
+    base_g = min(255, int(200*w_r + 255*w_g + 200*w_b))
+    base_b = min(255, int(200*w_r + 200*w_g + 255*w_b))
 
     def cell_bg(a):
-        factor = max(0.0, 1.0 - min(a, 2.0) / 2.0)
-        r = int(base_r * factor)
-        g = int(base_g * factor)
-        b = int(base_b * factor)
+        f = max(0.0, 1.0 - min(a, 2.0) / 2.0)
+        r, g, b = int(base_r*f), int(base_g*f), int(base_b*f)
         return f"rgb({r},{g},{b})", 0.299*r + 0.587*g + 0.114*b
 
     html  = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
@@ -1007,31 +1016,11 @@ def weighted_absorbance_table_html(abs_df: pd.DataFrame,
     return html
 
 
-def apply_calibration(abs_df: pd.DataFrame,
-                      cal_points: list[tuple[float, float]]) -> pd.DataFrame:
-    """
-    Apply a linear calibration to a raw absorbance DataFrame.
-    cal_points: list of (A_raw, A_reference) pairs from plate reader measurements.
-    Fits: A_cal = slope × A_raw + intercept   (least-squares)
-    Returns calibrated DataFrame, or original if < 2 valid points.
-    """
-    if len(cal_points) < 2:
-        return abs_df
-    xs = np.array([p[0] for p in cal_points], dtype=float)
-    ys = np.array([p[1] for p in cal_points], dtype=float)
-    # Least-squares fit forced through origin option if intercept ~ 0
-    coeffs     = np.polyfit(xs, ys, 1)
-    slope, intercept = coeffs[0], coeffs[1]
-    cal = abs_df.copy()
-    cal[:] = np.clip(abs_df.values * slope + intercept, 0, None)
-    return cal.round(4), slope, intercept
-
-
 def export_weighted_excel(abs_df: pd.DataFrame, dye_name: str,
                           w_r: float, w_g: float, w_b: float,
-                          blank_row_label: str, k: float,
+                          blank_row_label: str, gamma: float,
                           cal_info: str = "") -> bytes:
-    """Excel export for weighted-channel absorbance, same structure as other tables."""
+    """Excel export for weighted-channel absorbance."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Weighted absorbance"
@@ -1044,53 +1033,46 @@ def export_weighted_excel(abs_df: pd.DataFrame, dye_name: str,
     base_b = min(255, int(200*w_r + 200*w_g + 255*w_b))
 
     def a_to_hex(a):
-        factor = max(0.0, 1.0 - min(a, 2.0) / 2.0)
-        r = int(base_r * factor)
-        g = int(base_g * factor)
-        b = int(base_b * factor)
-        return f"FF{r:02X}{g:02X}{b:02X}"
+        f = max(0.0, 1.0 - min(a, 2.0) / 2.0)
+        return f"FF{int(base_r*f):02X}{int(base_g*f):02X}{int(base_b*f):02X}"
 
-    # Column headers
     ws.cell(row=1, column=1, value="")
     for c_idx, c_label in enumerate(COLS):
-        cell           = ws.cell(row=1, column=c_idx + 2, value=c_label)
-        cell.font      = Font(bold=True)
+        cell = ws.cell(row=1, column=c_idx+2, value=c_label)
+        cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
-        cell.border    = border
+        cell.border = border
 
-    # Data rows
     for r_idx, row_label in enumerate(ROWS):
-        hdr            = ws.cell(row=r_idx + 2, column=1, value=row_label)
-        hdr.font       = Font(bold=True)
-        hdr.alignment  = Alignment(horizontal="center")
-        hdr.border     = border
+        hdr = ws.cell(row=r_idx+2, column=1, value=row_label)
+        hdr.font = Font(bold=True)
+        hdr.alignment = Alignment(horizontal="center")
+        hdr.border = border
         for c_idx in range(N_COLS):
             a    = float(abs_df.iloc[r_idx, c_idx])
-            cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=round(a, 4))
-            hex_col        = a_to_hex(a)
-            cell.fill      = PatternFill("solid", fgColor=hex_col)
-            r2 = int(hex_col[2:4], 16)
-            g2 = int(hex_col[4:6], 16)
-            b2 = int(hex_col[6:8], 16)
-            lum            = 0.299*r2 + 0.587*g2 + 0.114*b2
-            cell.font      = Font(color="000000" if lum > 128 else "FFFFFF")
+            cell = ws.cell(row=r_idx+2, column=c_idx+2, value=round(a, 4))
+            hx   = a_to_hex(a)
+            cell.fill = PatternFill("solid", fgColor=hx)
+            r2, g2, b2 = int(hx[2:4],16), int(hx[4:6],16), int(hx[6:8],16)
+            cell.font = Font(color="000000" if 0.299*r2+0.587*g2+0.114*b2 > 128
+                             else "FFFFFF")
             cell.alignment = Alignment(horizontal="center")
-            cell.border    = border
+            cell.border = border
 
     ws.column_dimensions["A"].width = 5
     for c_idx in range(N_COLS):
-        ws.column_dimensions[get_column_letter(c_idx + 2)].width = 9
+        ws.column_dimensions[get_column_letter(c_idx+2)].width = 9
 
     ws_meta = wb.create_sheet("Info")
-    ws_meta.append(["Microtiter Plate Analyzer — weighted-channel absorbance"])
+    ws_meta.append(["Microtiter Plate Analyzer — gamma-corrected weighted absorbance"])
     ws_meta.append([f"Dye: {dye_name}"])
     ws_meta.append([f"Channel weights: R={w_r}  G={w_g}  B={w_b}"])
     ws_meta.append([f"Blank reference row: {blank_row_label}"])
-    ws_meta.append([f"Camera correction factor k: {k}"])
-    ws_meta.append(["Formula: A = -log10(T_eff) × k"])
-    ws_meta.append(["T_eff = (wR×TR + wG×TG + wB×TB) / (wR+wG+wB)"])
+    ws_meta.append([f"Gamma correction: γ = {gamma}"])
+    ws_meta.append(["Formula: A = -log10(T_eff),  T_eff = Σ(w·T_lin) / Σw"])
+    ws_meta.append(["T_lin = (pixel/255)^γ / (blank_pixel/255)^γ"])
     if cal_info:
-        ws_meta.append([f"Calibration applied: {cal_info}"])
+        ws_meta.append([f"Linear calibration applied: {cal_info}"])
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1395,14 +1377,16 @@ def main():
         )
 
         # ── Weighted-channel absorbance + optional calibration ────────────────
-        st.markdown("### 9️⃣ Dye-optimised absorbance (weighted channels + calibration)")
+        st.markdown("### 9️⃣ Dye-optimised absorbance (gamma-corrected weighted channels)")
         st.caption(
-            "Computes effective transmittance as a weighted combination of R, G, B channels "
+            "Applies sRGB gamma correction (γ = 2.2) to linearise pixel values before "
+            "computing transmittance — this is the main source of systematic underestimation "
+            "in sections 7 and 8. Then uses a weighted combination of R, G, B channels "
             "tuned to the dye's absorption spectrum. Optionally apply a linear calibration "
-            "using known plate-reader values to correct systematic bias."
+            "using wells with known plate-reader absorbance values."
         )
 
-        # Dye selector
+        # ── Dye selector ──────────────────────────────────────────────────────
         dye_name = st.selectbox("Select dye", options=list(DYES.keys()),
                                 key="dye_select")
         lam_max, w_r, w_g, w_b = DYES[dye_name]
@@ -1416,47 +1400,59 @@ def main():
             lam_max = lam_custom
 
         st.caption(
-            f"Channel weights: **R = {w_r}  G = {w_g}  B = {w_b}** "
-            f"{'(estimated from λ=' + str(lam_max) + ' nm)' if lam_max else ''}. "
-            "Blank row and k are shared with section 7️⃣."
+            f"Channel weights: **R = {w_r}  G = {w_g}  B = {w_b}**"
+            + (f" (estimated from λ = {lam_max} nm)" if lam_max else "") +
+            ". Blank row is shared with section 7️⃣."
         )
 
-        # Raw weighted absorbance
+        # Compute gamma-corrected weighted absorbance (k=1.0, no extra scaling)
         wabs_df = build_absorbance_weighted(
-            img_orig, grid, blank_row_idx, w_r, w_g, w_b, k_user
+            img_orig, grid, blank_row_idx, w_r, w_g, w_b, gamma=2.2
         )
 
         # ── Optional calibration ──────────────────────────────────────────────
-        with st.expander("🔧 Optional: linear calibration with known values"):
+        with st.expander("🔧 Optional: linear calibration with plate-reader values"):
             st.caption(
-                "Enter 2–4 pairs of (raw value from this app, known absorbance from plate reader). "
-                "The app will fit a linear model A_cal = slope × A_raw + intercept "
-                "and apply it to all wells. Leave empty to skip calibration."
+                "Select wells whose absorbance you measured on a plate reader "
+                "(use non-blank wells only — blank row is always 0 and cannot be used). "
+                "The app fits **A_cal = slope × A_raw + intercept** and applies it to all wells. "
+                "Minimum 2 points required."
             )
             n_cal = st.selectbox("Number of calibration points", [0, 2, 3, 4],
                                  key="n_cal")
-            cal_points = []
+            cal_wells = []
             for i in range(n_cal):
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
                 with c1:
-                    a_raw = st.number_input(f"Point {i+1} — A app",
-                                            min_value=0.0, max_value=5.0,
-                                            value=0.0, step=0.001,
-                                            format="%.4f", key=f"cal_raw_{i}")
+                    row_lbl = st.selectbox(
+                        f"Point {i+1} row",
+                        options=[r for r in ROWS if r != blank_row_label],
+                        key=f"cal_row_{i}"
+                    )
                 with c2:
-                    a_ref = st.number_input(f"Point {i+1} — A plate reader",
-                                            min_value=0.0, max_value=5.0,
-                                            value=0.0, step=0.001,
-                                            format="%.4f", key=f"cal_ref_{i}")
-                if a_raw > 0 or a_ref > 0:
-                    cal_points.append((a_raw, a_ref))
+                    col_num = st.number_input(
+                        f"Point {i+1} column", min_value=1, max_value=12,
+                        value=1, step=1, key=f"cal_col_{i}"
+                    )
+                with c3:
+                    a_ref = st.number_input(
+                        f"Point {i+1} A (plate reader)",
+                        min_value=0.0, max_value=5.0, value=0.0,
+                        step=0.001, format="%.4f", key=f"cal_ref_{i}"
+                    )
+                if a_ref > 0:
+                    cal_wells.append((row_lbl, int(col_num), a_ref))
 
-        # Apply calibration if enough points
+        # Apply calibration
         cal_info = ""
-        if len(cal_points) >= 2:
-            final_df, slope, intercept = apply_calibration(wabs_df, cal_points)
-            cal_info = f"A_cal = {slope:.4f} × A_raw + {intercept:.4f}"
-            st.success(f"Calibration applied: {cal_info}")
+        if len(cal_wells) >= 2:
+            final_df, slope, intercept = apply_calibration(wabs_df, cal_wells)
+            if slope is not None:
+                cal_info = f"A_cal = {slope:.4f} × A_raw + {intercept:.4f}"
+                st.success(f"Calibration applied: {cal_info}")
+            else:
+                final_df = wabs_df
+                st.warning("Calibration failed — check that selected wells have non-zero raw absorbance.")
         else:
             final_df = wabs_df
             slope, intercept = None, None
@@ -1465,20 +1461,20 @@ def main():
                     unsafe_allow_html=True)
         if slope is not None:
             st.caption(
-                f"Calibrated values shown. "
-                f"Formula: **A_cal = {slope:.4f} × A_raw + {intercept:.4f}** "
-                f"(R, G, B weights: {w_r}, {w_g}, {w_b}; k = {k_user:.1f})"
+                f"Calibrated. **{cal_info}** "
+                f"(weights R={w_r} G={w_g} B={w_b}, γ=2.2)"
             )
         else:
             st.caption(
-                f"Uncalibrated. Formula: **A = −log₁₀(T_eff) × {k_user:.1f}** "
-                f"(R, G, B weights: {w_r}, {w_g}, {w_b}). "
-                "Add calibration points above for improved accuracy."
+                f"Uncalibrated. Formula: **A = −log₁₀(T_eff)**, "
+                f"T_eff = weighted gamma-corrected transmittance "
+                f"(R={w_r}, G={w_g}, B={w_b}). "
+                "Enter calibration points above for improved accuracy."
             )
 
         wabs_xlsx = export_weighted_excel(
             final_df, dye_name, w_r, w_g, w_b,
-            blank_row_label, k_user, cal_info
+            blank_row_label, 2.2, cal_info
         )
         st.download_button(
             label="⬇️ Download dye-optimised absorbance (Excel)",
