@@ -1421,6 +1421,15 @@ def main():
             st.session_state.step = 1
             st.rerun()
 
+    # ── Footer ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='margin-top:2.5rem;padding-top:0.6rem;border-top:1px solid #e0e0e0;"
+        "text-align:center;color:#aaaaaa;font-size:11px;'>"
+        "Developed by Jana Pokorná &nbsp;·&nbsp; Masaryk University, Brno &nbsp;·&nbsp; 2026"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
 
 if __name__ == "__main__":
     main()
