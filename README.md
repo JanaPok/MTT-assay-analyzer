@@ -160,9 +160,9 @@ If you use MicrotiterAnalyzer in your research, please cite:
 
 ```
 Pokorna, J. (2026). microtiter_analyzer (Version 1.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.19467293
----
+
 
 ## Author
 
-Developed by **Jana Pokorna**, Masaryk University, Brno, 2026.  
+Developed by Jana Pokorna, Masaryk University, Brno, 2026.  
 Contact: jana.pokorna@med.muni.cz
