@@ -8,7 +8,7 @@ A mobile-friendly, hardware-free web application for quantitative colorimetric a
 
 ## Overview
 
-Quantitative analysis of 96-well microtiter plates conventionally requires a dedicated microplate spectrophotometer. MicrotiterAnalyzer replaces this hardware with a smartphone camera and a web browser. The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
+MicrotiterAnalyzer imitates conventinal spectrophotometer with a smartphone camera and a web browser. The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
 
 The application is built with [Streamlit](https://mic-ana.streamlit.app), runs fully in-browser with no installation on the user's device, and works on iOS, Android, and desktop.
 
