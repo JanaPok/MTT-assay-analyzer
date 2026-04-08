@@ -134,7 +134,7 @@ The app is deployed on Streamlit Cloud — no installation needed:
 
 ## Limitations
 
-- Results depend on **illumination quality**. Uniform, diffuse overhead lighting is strongly recommended. Avoid direct sunlight, shadows cast by the camera, and strong reflections from the plate lid.
+- Results depend on **illumination quality**. Uniform, diffuse bottom lighting is strongly recommended. Avoid direct sunlight, shadows cast by the camera, and strong reflections from the plate lid.
 - The method captures **broadband RGB light**, not monochromatic light at the dye's absorption peak. This introduces a systematic underestimation of absorbance that is partially corrected by gamma correction and channel weighting, but cannot be fully eliminated without a bandpass filter or calibration.
 - **Gamma and EXIF correction factors** are empirical estimates based on camera brand. They may vary between firmware versions and shooting conditions. For quantitative results, always calibrate against at least two plate-reader reference values.
 - **Well detection** relies on manual alignment of two corner wells. Plates that are significantly rotated or perspective-distorted may produce less accurate grids. Photograph the plate as flat-on as possible.
@@ -159,15 +159,10 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 If you use MicrotiterAnalyzer in your research, please cite:
 
 ```
-Pokornz. (2025). MicrotiterAnalyzer (Version 1.0) [Software].
-GitHub. https://github.com/Pokornz/microtiter_analyzer
-```
-
-*A formal citation with DOI will be added upon publication.*
-
+Pokorna, J. (2026). microtiter_analyzer (Version 1.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.19467293
 ---
 
 ## Author
 
-Developed by **[Jana Pokorna]**, [Masaryk University, Brno], [2026].  
-Contact: [jana.pokorna@med.muni.cz]
+Developed by **Jana Pokorna**, Masaryk University, Brno, 2026.  
+Contact: jana.pokorna@med.muni.cz
