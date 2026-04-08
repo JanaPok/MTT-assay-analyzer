@@ -1,6 +1,6 @@
-# MicrotiterAnalyzer
+# MTT assay analyzer
 
-A mobile-friendly, hardware-free web application for quantitative colorimetric analysis of 96-well microtiter plates using an ordinary smartphone photograph.
+A mobile-friendly, hardware-free web application for quantitative colorimetric analysis of 96-well plates using an ordinary smartphone photograph.
 
 > **No plate reader required.** Upload a photo, align two wells, and receive a full suite of colorimetric outputs — directly in your browser on any device.
 
@@ -8,7 +8,7 @@ A mobile-friendly, hardware-free web application for quantitative colorimetric a
 
 ## Overview
 
-MicrotiterAnalyzer imitates conventinal spectrophotometer with a smartphone camera and a web browser. The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
+MTT assay analyzer imitates conventinal spectrophotometer with a smartphone camera and a web browser. The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
 
 The application is built with [Streamlit](https://mic-ana.streamlit.app), runs fully in-browser with no installation on the user's device, and works on iOS, Android, and desktop.
 
@@ -156,11 +156,11 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ## Citation
 
-If you use MicrotiterAnalyzer in your research, please cite:
+If you use MTT assay analyzer in your research, please cite:
 
-```
 Pokorna, J. (2026). microtiter_analyzer (Version 1.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.19467293
 
+---
 
 ## Author
 
