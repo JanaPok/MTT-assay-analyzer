@@ -8,7 +8,7 @@ A mobile-friendly, hardware-free web application for quantitative colorimetric a
 
 ## Overview
 
-Quantitative analysis of MTT assay 96-well plates conventionally requires a dedicated plate reader spectrophotometer — an instrument costing USD 10,000–50,000. MTT Assay Analyzer replaces this hardware with a smartphone camera and a web browser. The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
+The user photographs the plate, marks two reference wells (A1 and H12), and the application automatically detects all 96 well positions and computes multiple colorimetric metrics, including an estimated absorbance value.
 
 The application is built with [Streamlit](https://streamlit.io), runs fully in-browser with no installation on the user's device, and works on iOS, Android, and desktop.
 
@@ -31,7 +31,7 @@ The application is built with [Streamlit](https://streamlit.io), runs fully in-b
 
 ### Step 1 — Upload a photograph
 
-Take a photo of the plate with any smartphone (JPG or PNG). Uniform, diffuse overhead lighting gives the best results. The app reads the EXIF metadata to detect the camera brand and suggest a correction factor *k*.
+Take a photo of the plate with any smartphone (JPG or PNG). Uniform, diffuse bottom lighting gives the best results. The app reads the EXIF metadata to detect the camera brand and suggest a correction factor *k*.
 
 ### Step 2 — Align the well grid
 
@@ -74,7 +74,7 @@ The blank row (the lightest row, typically the negative control) is selected by 
 
 #### 7️⃣ Gamma-corrected absorbance with optional calibration
 
-The most accurate method. Applies the full sRGB gamma correction before computing transmittance, using equal weights across R, G, B channels:
+Applies the full sRGB gamma correction before computing transmittance, using equal weights across R, G, B channels:
 
 ```
 I_linear = ((pixel/255 + 0.055) / 1.055)^2.2   ← invert sRGB gamma
@@ -112,7 +112,7 @@ The app opens automatically at `http://localhost:8501`.
 
 The app is deployed on Streamlit Cloud — no installation needed:
 
-> 🔗 **[your-app-url.streamlit.app](https://your-app-url.streamlit.app)**
+> 🔗 **[mic-ana.streamlit.app](https://mic-ana.streamlit.app)**
 > *(update this link after deploying)*
 
 **iPhone:** Safari → Share → "Add to Home Screen"  
@@ -134,17 +134,11 @@ The app is deployed on Streamlit Cloud — no installation needed:
 
 ## Limitations
 
-- Results depend on **illumination quality**. Uniform, diffuse overhead lighting is strongly recommended. Avoid direct sunlight, shadows cast by the camera, and strong reflections from the plate lid.
+- Results depend on **illumination quality**. Uniform, diffuse bottom lighting is strongly recommended. Avoid direct sunlight, shadows cast by the camera, and strong reflections from the plate lid.
 - The method captures **broadband RGB light**, not monochromatic light at the dye's absorption peak. This introduces a systematic underestimation of absorbance that is partially corrected by gamma correction and channel weighting, but cannot be fully eliminated without a bandpass filter or calibration.
 - **Gamma and EXIF correction factors** are empirical estimates based on camera brand. They may vary between firmware versions and shooting conditions. For quantitative results, always calibrate against at least two plate-reader reference values.
 - **Well detection** relies on manual alignment of two corner wells. Plates that are significantly rotated or perspective-distorted may produce less accurate grids. Photograph the plate as flat-on as possible.
 - The sampling region is fixed at **11 × 11 pixels** around each well centre. For very small or irregularly spaced wells, or very low-resolution photographs, this may include pixels outside the well boundary.
-
----
-
-## Contributing
-
-Contributions are welcome. Please open an issue to discuss proposed changes before submitting a pull request.
 
 ---
 
@@ -159,15 +153,13 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 If you use MTT Assay Analyzer in your research, please cite:
 
 ```
-Pokornz. (2025). MTT Assay Analyzer (Version 1.0) [Software].
-GitHub. https://github.com/Pokornz/mtt_assay_analyzer
+JanaPok. (2026). MTT Assay Analyzer (Version 1.0) [Software].
+GitHub. https://github.com/JanaPok/MTT-assay-analyzer
 ```
-
-*A formal citation with DOI will be added upon publication.*
 
 ---
 
 ## Author
 
-Developed by **[your name]**, [your institution], [year].  
-Contact: [your email or GitHub profile]
+Developed by **Jana Pokorna**, MED MUNI Brno, 2026.  
+Contact: jana.pokorna@med.muni.cz
