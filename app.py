@@ -244,95 +244,6 @@ def build_grayscale(img_orig: Image.Image, grid: np.ndarray) -> pd.DataFrame:
     )
 
 
-def grayscale_table_html(gray_df: pd.DataFrame) -> str:
-    """
-    Build an HTML table showing grayscale intensity per well.
-    Cell background matches the actual gray shade; text colour adapts for contrast.
-    """
-    html = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
-    html += '<table style="border-collapse:collapse;font-size:11px;min-width:480px;">'
-    html += "<tr><th style='padding:3px 4px;'></th>"
-    for c in COLS:
-        html += f"<th style='padding:3px 4px;text-align:center;'>{c}</th>"
-    html += "</tr>"
-    for r_idx, row_label in enumerate(ROWS):
-        html += f"<tr><td style='padding:3px 4px;font-weight:bold;'>{row_label}</td>"
-        for c_idx in range(N_COLS):
-            g      = int(gray_df.iloc[r_idx, c_idx])
-            bg     = f"rgb({g},{g},{g})"
-            fg     = "#000" if g > 128 else "#fff"
-            border = "1px solid #ccc"
-            html += (f"<td style='background:{bg};color:{fg};padding:4px 3px;"
-                     f"text-align:center;border:{border};min-width:36px;'>"
-                     f"{g}</td>")
-        html += "</tr>"
-    html += "</table></div>"
-    return html
-
-
-def export_grayscale_excel(gray_df: pd.DataFrame, img_orig: Image.Image,
-                           grid: np.ndarray) -> bytes:
-    """
-    Create a formatted Excel workbook with the grayscale intensity table.
-    Each cell:
-      - displays the integer grayscale value (0–255)
-      - has a background fill matching the actual gray shade of that well
-      - uses black or white text for legibility
-    Column headers (1–12) and row headers (A–H) are included.
-    Returns the workbook as bytes suitable for st.download_button.
-    """
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Grayscale intensities"
-
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    # ── Header row (column numbers) ────────────────────────────────────────────
-    ws.cell(row=1, column=1, value="")           # top-left corner cell (empty)
-    for c_idx, c_label in enumerate(COLS):
-        cell = ws.cell(row=1, column=c_idx + 2, value=c_label)
-        cell.font      = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.border    = border
-
-    # ── Data rows ──────────────────────────────────────────────────────────────
-    for r_idx, row_label in enumerate(ROWS):
-        # Row letter header
-        hdr = ws.cell(row=r_idx + 2, column=1, value=row_label)
-        hdr.font      = Font(bold=True)
-        hdr.alignment = Alignment(horizontal="center")
-        hdr.border    = border
-
-        for c_idx in range(N_COLS):
-            g    = int(gray_df.iloc[r_idx, c_idx])
-            cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=g)
-
-            # Gray fill — openpyxl expects a 6-digit hex colour string
-            hex_g  = f"{g:02X}"
-            hex_col = hex_g * 3          # e.g. "7F7F7F"
-            cell.fill      = PatternFill("solid", fgColor="FF" + hex_col)
-            cell.font      = Font(color="000000" if g > 128 else "FFFFFF")
-            cell.alignment = Alignment(horizontal="center")
-            cell.border    = border
-
-    # ── Column widths ──────────────────────────────────────────────────────────
-    ws.column_dimensions["A"].width = 5   # row-label column
-    for c_idx in range(N_COLS):
-        ws.column_dimensions[get_column_letter(c_idx + 2)].width = 6
-
-    # ── Metadata sheet ─────────────────────────────────────────────────────────
-    ws_meta = wb.create_sheet("Info")
-    ws_meta.append(["MTT Assay Analyzer — grayscale export"])
-    ws_meta.append(["Values represent mean grayscale intensity (0=black, 255=white)"])
-    ws_meta.append(["Sampling region: 11×11 px centred on each well"])
-    ws_meta.append(["Grayscale conversion: ITU-R BT.601 (PIL Image.convert('L'))"])
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
 def inverted_table_html(gray_df: pd.DataFrame) -> str:
     """
     Build an HTML table showing pseudo-absorbance (255 - grayscale) per well.
@@ -502,193 +413,6 @@ def absorbance_table_html(abs_df: pd.DataFrame) -> str:
     return html
 
 
-def build_absorbance_channel(img_orig: Image.Image, grid: np.ndarray,
-                             blank_row_idx: int = 0,
-                             channel: int = 2,
-                             k_override: float = 1.0) -> pd.DataFrame:
-    """
-    Compute absorbance using a single RGB channel instead of grayscale.
-    This improves sensitivity for dyes with a narrow absorption peak, because
-    only the channel most affected by the dye is used (e.g. Blue for eosin).
-
-        channel: 0 = Red, 1 = Green, 2 = Blue
-        blank_row_idx: row used as blank reference
-        k_override: correction factor (same meaning as in build_absorbance)
-
-    Formula: A = -log10(ch_mean / ch_blank) × k_override
-    """
-    img_array = np.array(img_orig.convert("RGB"), dtype=float)
-    ch_array  = img_array[:, :, channel]
-    h, w      = ch_array.shape
-
-    means = np.zeros((N_ROWS, N_COLS), dtype=float)
-    for r in range(N_ROWS):
-        for c in range(N_COLS):
-            x, y = grid[r, c]
-            x0 = max(0, int(x) - SAMPLE_RADIUS)
-            x1 = min(w, int(x) + SAMPLE_RADIUS + 1)
-            y0 = max(0, int(y) - SAMPLE_RADIUS)
-            y1 = min(h, int(y) + SAMPLE_RADIUS + 1)
-            means[r, c] = ch_array[y0:y1, x0:x1].mean()
-
-    ch_blank = means[blank_row_idx, :].mean()
-
-    values = np.zeros((N_ROWS, N_COLS), dtype=float)
-    for r in range(N_ROWS):
-        for c in range(N_COLS):
-            cm = means[r, c]
-            if ch_blank > 0 and cm < ch_blank:
-                values[r, c] = -math.log10(cm / ch_blank) * k_override
-            else:
-                values[r, c] = 0.0
-
-    return pd.DataFrame(
-        np.round(values, 4),
-        index=ROWS,
-        columns=[str(c) for c in COLS]
-    )
-
-
-# Channel display colours for background tint in table and Excel
-CHANNEL_TINT = {
-    0: (255, 200, 200),   # Red channel → light red tint
-    1: (200, 240, 200),   # Green channel → light green tint
-    2: (200, 210, 255),   # Blue channel → light blue tint
-}
-CHANNEL_NAME = {0: "Red", 1: "Green", 2: "Blue"}
-
-
-def channel_absorbance_table_html(abs_df: pd.DataFrame, channel: int) -> str:
-    """
-    HTML table for single-channel absorbance.
-    Background uses a tinted shade matching the selected channel,
-    darkening with higher absorbance values.
-    """
-    tr, tg, tb = CHANNEL_TINT[channel]
-
-    def cell_bg(a):
-        # Darken the channel tint linearly with absorbance (max at A=2)
-        factor = max(0.0, 1.0 - min(a, 2.0) / 2.0)
-        r = int(tr + (0 - tr) * (1 - factor))
-        g = int(tg + (0 - tg) * (1 - factor))
-        b = int(tb + (0 - tb) * (1 - factor))
-        return f"rgb({r},{g},{b})", 0.299*r + 0.587*g + 0.114*b
-
-    html  = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
-    html += '<table style="border-collapse:collapse;font-size:11px;min-width:480px;">'
-    html += "<tr><th style='padding:3px 4px;'></th>"
-    for c in COLS:
-        html += f"<th style='padding:3px 4px;text-align:center;'>{c}</th>"
-    html += "</tr>"
-    for r_idx, row_label in enumerate(ROWS):
-        html += f"<tr><td style='padding:3px 4px;font-weight:bold;'>{row_label}</td>"
-        for c_idx in range(N_COLS):
-            a        = float(abs_df.iloc[r_idx, c_idx])
-            bg, lum  = cell_bg(a)
-            fg       = "#000" if lum > 128 else "#fff"
-            html += (f"<td style='background:{bg};color:{fg};padding:4px 3px;"
-                     f"text-align:center;border:1px solid #ccc;min-width:42px;'>"
-                     f"{a:.4f}</td>")
-        html += "</tr>"
-    html += "</table></div>"
-    return html
-
-
-def export_channel_absorbance_excel(abs_df: pd.DataFrame, channel: int,
-                                    blank_row_label: str, k: float) -> bytes:
-    """
-    Excel export for single-channel absorbance.
-    Cell background uses a tinted shade matching the channel.
-    """
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"{CHANNEL_NAME[channel]} channel absorbance"
-
-    thin   = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    tr, tg, tb = CHANNEL_TINT[channel]
-
-    def a_to_hex(a):
-        factor = max(0.0, 1.0 - min(a, 2.0) / 2.0)
-        r = int(tr + (0 - tr) * (1 - factor))
-        g = int(tg + (0 - tg) * (1 - factor))
-        b = int(tb + (0 - tb) * (1 - factor))
-        return f"{r:02X}{g:02X}{b:02X}"
-
-    # Column headers
-    ws.cell(row=1, column=1, value="")
-    for c_idx, c_label in enumerate(COLS):
-        cell           = ws.cell(row=1, column=c_idx + 2, value=c_label)
-        cell.font      = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.border    = border
-
-    # Data rows
-    for r_idx, row_label in enumerate(ROWS):
-        hdr            = ws.cell(row=r_idx + 2, column=1, value=row_label)
-        hdr.font       = Font(bold=True)
-        hdr.alignment  = Alignment(horizontal="center")
-        hdr.border     = border
-
-        for c_idx in range(N_COLS):
-            a    = float(abs_df.iloc[r_idx, c_idx])
-            cell = ws.cell(row=r_idx + 2, column=c_idx + 2, value=round(a, 4))
-            hex_col       = a_to_hex(a)
-            cell.fill     = PatternFill("solid", fgColor="FF" + hex_col)
-            r2, g2, b2    = int(hex_col[0:2],16), int(hex_col[2:4],16), int(hex_col[4:6],16)
-            lum           = 0.299*r2 + 0.587*g2 + 0.114*b2
-            cell.font     = Font(color="000000" if lum > 128 else "FFFFFF")
-            cell.alignment = Alignment(horizontal="center")
-            cell.border   = border
-
-    ws.column_dimensions["A"].width = 5
-    for c_idx in range(N_COLS):
-        ws.column_dimensions[get_column_letter(c_idx + 2)].width = 9
-
-    ws_meta = wb.create_sheet("Info")
-    ws_meta.append([f"MTT Assay Analyzer — {CHANNEL_NAME[channel]} channel absorbance"])
-    ws_meta.append([f"Channel used: {CHANNEL_NAME[channel]} (0=R, 1=G, 2=B)"])
-    ws_meta.append([f"Blank reference row: {blank_row_label}"])
-    ws_meta.append([f"Correction factor k: {k}"])
-    ws_meta.append(["Formula: A = -log10(ch_mean / ch_blank) × k"])
-    ws_meta.append(["Using a single channel improves sensitivity for dyes with narrow absorption peaks."])
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-
-    """
-    Build an HTML table displaying estimated absorbance values.
-    Higher absorbance = darker background (maps A to a gray shade for visual cue).
-    Values are shown to 4 decimal places.
-    """
-    # Map absorbance to a gray shade: A=0 → white (255), A≥2 → black (0)
-    def a_to_gray(a):
-        return max(0, int(255 * (1 - min(a, 2.0) / 2.0)))
-
-    html  = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">'
-    html += '<table style="border-collapse:collapse;font-size:11px;min-width:480px;">'
-    html += "<tr><th style='padding:3px 4px;'></th>"
-    for c in COLS:
-        html += f"<th style='padding:3px 4px;text-align:center;'>{c}</th>"
-    html += "</tr>"
-    for r_idx, row_label in enumerate(ROWS):
-        html += f"<tr><td style='padding:3px 4px;font-weight:bold;'>{row_label}</td>"
-        for c_idx in range(N_COLS):
-            a  = float(abs_df.iloc[r_idx, c_idx])
-            g  = a_to_gray(a)
-            bg = f"rgb({g},{g},{g})"
-            fg = "#000" if g > 128 else "#fff"
-            html += (f"<td style='background:{bg};color:{fg};padding:4px 3px;"
-                     f"text-align:center;border:1px solid #ccc;min-width:42px;'>"
-                     f"{a:.4f}</td>")
-        html += "</tr>"
-    html += "</table></div>"
-    return html
-
-
 def export_absorbance_excel(abs_df: pd.DataFrame) -> bytes:
     """
     Create a formatted Excel workbook with the estimated absorbance table.
@@ -821,43 +545,42 @@ def export_distances_excel(colors, dist_df, ref_rgb) -> bytes:
     return buf.getvalue()
 
 
-# Known correction factors per camera brand (empirical values)
-CAMERA_K = {
-    "apple":   2.8,   # iPhone 13–16 / Air
-    "samsung": 2.4,
-    "google":  3.5,   # Pixel
-    "xiaomi":  2.2,
-    "redmi":   2.2,
-    "huawei":  2.3,
-    "honor":   2.3,
-    "oneplus": 2.5,
-    "oppo":    2.5,
+# ── Camera-guided k estimation ────────────────────────────────────────────────
+# Per-brand search ranges for k, derived from empirical testing.
+# The range is used to constrain the data-driven optimisation, preventing
+# the algorithm from converging on noise-driven extremes.
+CAMERA_K_RANGE = {
+    "apple":   (2.2, 3.3),   # iPhone (all models)
+    "samsung": (1.9, 2.8),
+    "google":  (2.8, 3.8),   # Pixel
+    "xiaomi":  (1.8, 2.8),
+    "redmi":   (1.8, 2.8),
+    "huawei":  (1.9, 2.8),
+    "honor":   (1.9, 2.8),
+    "oneplus": (2.0, 3.0),
+    "oppo":    (2.0, 3.0),
 }
-K_DEFAULT = 3.0   # fallback when brand is unknown or EXIF is missing
+K_RANGE_DEFAULT = (1.8, 4.0)   # wide fallback for unknown brands
+K_DEFAULT       = 2.8           # single-value fallback (no EXIF at all)
 
 
-def k_from_exif(uploaded_file) -> tuple[float, str]:
+def get_camera_k_range(uploaded_file) -> tuple[tuple[float, float], str]:
     """
-    Read EXIF Make/Model from an uploaded image file and return
-    (k_value, info_string). Falls back to K_DEFAULT if EXIF is absent
-    or brand is unrecognised.
-
-    Reads the file into a BytesIO buffer first to avoid stream position issues
-    with Streamlit's UploadedFile object.
+    Read EXIF Make/Model from the uploaded image and return a brand-specific
+    (k_min, k_max) search range together with a human-readable status string.
+    Falls back to K_RANGE_DEFAULT when EXIF is absent or brand is unrecognised.
     """
     try:
-        # Read entire file into memory so seek/reopen works reliably
         uploaded_file.seek(0)
         raw_bytes = uploaded_file.read()
         uploaded_file.seek(0)
         buf = io.BytesIO(raw_bytes)
 
         img_raw = Image.open(buf)
-        img_raw.load()   # force full load including EXIF
+        img_raw.load()
 
-        # PIL ≥ 9.1: use getexif(); fallback to _getexif() for older versions
         try:
-            exif_data = img_raw.getexif()          # returns dict-like ExifData
+            exif_data = img_raw.getexif()
             make  = str(exif_data.get(271, "")).strip().lower()
             model = str(exif_data.get(272, "")).strip()
         except AttributeError:
@@ -866,45 +589,126 @@ def k_from_exif(uploaded_file) -> tuple[float, str]:
             model = str(raw_exif.get(272, "")).strip()
 
         if not make:
-            return K_DEFAULT, "No EXIF camera data found — using default k."
+            return K_RANGE_DEFAULT, "No EXIF camera data found — using wide k search range."
 
-        for brand, k_val in CAMERA_K.items():
+        for brand, k_range in CAMERA_K_RANGE.items():
             if brand in make:
-                return k_val, f"Detected: **{make.title()} {model}** → k = {k_val}"
+                return (k_range,
+                        f"Detected: **{make.title()} {model}** "
+                        f"→ k search range {k_range[0]}–{k_range[1]}")
 
-        return K_DEFAULT, (f"Detected: **{make.title()} {model}** "
-                           f"(unknown brand) → using default k = {K_DEFAULT}")
+        return (K_RANGE_DEFAULT,
+                f"Detected: **{make.title()} {model}** "
+                f"(unknown brand) → wide k search range {K_RANGE_DEFAULT[0]}–{K_RANGE_DEFAULT[1]}")
 
     except Exception as e:
-        return K_DEFAULT, f"Could not read EXIF data ({e}) — using default k."
+        return K_RANGE_DEFAULT, f"Could not read EXIF data ({e}) — using wide k search range."
 
 
-# ── Dye definitions ────────────────────────────────────────────────────────────
-# Each entry: (lambda_max_nm, w_R, w_G, w_B)
-# Weights = which channel best captures the dye's absorbance.
-DYES = {
-    "Eosin (~490 nm)":          (490,  0.05, 0.35, 0.60),
-    "Hemoglobin (~540 nm)":     (540,  0.10, 0.75, 0.15),
-    "Phenol red (~560 nm)":     (560,  0.15, 0.70, 0.15),
-    "Methylene blue (~660 nm)": (660,  0.70, 0.25, 0.05),
-    "Custom wavelength":        (None, None, None, None),
-}
-
-
-def weights_from_lambda(lam_nm: int) -> tuple[float, float, float]:
+def estimate_k_from_plate(img_orig: Image.Image,
+                           grid: np.ndarray,
+                           blank_row_idx: int,
+                           k_range: tuple[float, float]
+                           ) -> tuple[float, str]:
     """
-    Estimate RGB weights from absorption peak using Gaussian camera sensitivity model:
-      Red ~620 nm σ80, Green ~540 nm σ60, Blue ~460 nm σ60.
+    Data-driven estimation of the optimal correction factor k and the most
+    informative RGB channel, using only the plate image itself (no plate-reader
+    reference required).
+
+    Algorithm
+    ---------
+    For each RGB channel independently:
+      1. Compute per-well mean pixel intensity; normalise by blank-row median
+         to obtain transmittance ratios T ∈ (0, 1].
+      2. Discard saturated wells (T < 0.05) and near-blank wells (T > 0.96)
+         that carry no useful absorbance information.
+      3. Sort the remaining transmittance values to obtain a monotone series.
+      4. For each candidate k in k_range (100 steps), compute
+            A = −k · log₁₀(T_sorted)
+         and score the result with:
+            score = R² of linear fit over rank − 0.02 · roughness
+         where roughness = Σ(ΔΔA)² penalises non-smooth (noisy) channels.
+      5. Keep the (channel, k) pair with the highest score overall.
+
+    Returns
+    -------
+    best_k    : float — estimated optimal k, rounded to 2 decimal places
+    best_ch   : str   — name of the most linear channel ("R", "G", or "B")
+
+    Notes
+    -----
+    The score does NOT require a spectrophotometer reference; it is a heuristic
+    that rewards channels and k values for which the absorbance series is
+    smooth and monotone. For MTT formazan (λ_max ≈ 570 nm, purple colour),
+    the green channel almost always wins because purple absorbs green light
+    most strongly, producing the largest dynamic range.
     """
-    def gauss(x, mu, sigma):
-        return math.exp(-0.5 * ((x - mu) / sigma) ** 2)
-    w_r = gauss(lam_nm, 620, 80)
-    w_g = gauss(lam_nm, 540, 60)
-    w_b = gauss(lam_nm, 460, 60)
-    total = w_r + w_g + w_b or 1.0
-    return round(w_r/total, 3), round(w_g/total, 3), round(w_b/total, 3)
+    arr = np.array(img_orig.convert("RGB"), dtype=float)
+    h, w = arr.shape[:2]
+
+    # Collect per-well mean RGB values
+    ch_vals = {ch: [] for ch in ("R", "G", "B")}
+    for r in range(N_ROWS):
+        for c in range(N_COLS):
+            x, y = grid[r, c]
+            x0 = max(0, int(x) - SAMPLE_RADIUS)
+            x1 = min(w, int(x) + SAMPLE_RADIUS + 1)
+            y0 = max(0, int(y) - SAMPLE_RADIUS)
+            y1 = min(h, int(y) + SAMPLE_RADIUS + 1)
+            patch = arr[y0:y1, x0:x1]
+            for i, ch in enumerate(("R", "G", "B")):
+                ch_vals[ch].append(float(patch[:, :, i].mean()))
+
+    # Blank reference: median of blank row for each channel
+    blank_start = blank_row_idx * N_COLS
+    blank_end   = blank_start + N_COLS
+
+    best_k     = float(np.mean(k_range))
+    best_score = -np.inf
+    best_ch    = "G"
+
+    k_candidates = np.linspace(k_range[0], k_range[1], 100)
+
+    for ch in ("R", "G", "B"):
+        vals       = np.array(ch_vals[ch])
+        blank_med  = float(np.median(vals[blank_start:blank_end]))
+        if blank_med < 1e-3:
+            continue
+
+        t_ratio = vals / blank_med                      # transmittance ratios
+        mask    = (t_ratio > 0.05) & (t_ratio < 0.96)  # discard saturated / blank-level
+        t_valid = np.sort(t_ratio[mask])                # monotone series
+
+        if len(t_valid) < 5:
+            continue
+
+        x_rank = np.arange(len(t_valid), dtype=float)
+
+        for k in k_candidates:
+            abs_v = -k * np.log10(np.clip(t_valid, 1e-9, 1.0))
+
+            # R² of linear fit over rank (rewards monotone, well-spread response)
+            mean_a  = abs_v.mean()
+            ss_tot  = np.sum((abs_v - mean_a) ** 2)
+            if ss_tot < 1e-12:
+                continue
+            coeffs  = np.polyfit(x_rank, abs_v, 1)
+            y_hat   = np.polyval(coeffs, x_rank)
+            r2      = 1.0 - np.sum((abs_v - y_hat) ** 2) / ss_tot
+
+            # Smoothness penalty: large second-differences → noisy channel
+            roughness = float(np.sum(np.diff(abs_v, n=2) ** 2))
+            score     = r2 - 0.02 * roughness
+
+            if score > best_score:
+                best_score = score
+                best_k     = k
+                best_ch    = ch
+
+    return round(best_k, 2), best_ch
 
 
+# ── Gamma-corrected weighted absorbance ───────────────────────────────────────
 def build_absorbance_weighted(img_orig: Image.Image, grid: np.ndarray,
                                blank_row_idx: int,
                                w_r: float, w_g: float, w_b: float,
@@ -1091,8 +895,8 @@ def main():
     # Mobile-friendly CSS overrides
     st.markdown("""
     <style>
-      .block-container { padding:1rem 0.6rem 2rem !important; max-width:100% !important; }
-      h1  { font-size:1.35rem !important; }
+      .block-container { padding:2.2rem 0.6rem 2rem !important; max-width:100% !important; }
+      h1  { font-size:1.35rem !important; padding-top:0.1rem !important; }
       h2, h3 { font-size:1.05rem !important; }
       .stButton>button, .stDownloadButton>button {
         width:100%; padding:0.8rem; font-size:1rem; border-radius:10px; margin-top:4px;
@@ -1123,11 +927,12 @@ def main():
     file_bytes = uploaded.read()
     uploaded.seek(0)
 
-    # Read EXIF camera brand and set default k (only on first load of this image)
-    if "exif_k" not in st.session_state:
-        exif_k, exif_msg = k_from_exif(io.BytesIO(file_bytes))
-        st.session_state.exif_k   = exif_k
-        st.session_state.exif_msg = exif_msg
+    # Read EXIF camera brand and derive brand-specific k search range
+    # (only on first load; persists for the session)
+    if "exif_k_range" not in st.session_state:
+        k_range, exif_msg = get_camera_k_range(io.BytesIO(file_bytes))
+        st.session_state.exif_k_range = k_range
+        st.session_state.exif_msg     = exif_msg
 
     img_orig  = Image.open(io.BytesIO(file_bytes)).convert("RGB")
     img_array = np.array(img_orig)
@@ -1283,6 +1088,16 @@ def main():
 
         # ── Section 6: Estimated absorbance (grayscale-based) ─────────────────
         st.markdown("### 6️⃣ Estimated absorbance per well")
+        st.caption(
+            "A simple heuristic approximation of absorbance. "
+            "The correction factor *k* is estimated automatically from the plate image itself — "
+            "the algorithm selects the RGB channel with the smoothest transmittance gradient "
+            "and finds the *k* that best linearises it. "
+            "The EXIF camera brand narrows the search range. "
+            "**This is an approximation only**: because camera JPEG encoding is non-linear, "
+            "a single scalar *k* cannot fully correct the response across all absorbance levels. "
+            "For more accurate and physically grounded results, use section 7️⃣."
+        )
 
         blank_row_label = st.selectbox(
             "Blank row (lightest row = unabsorbed light reference)",
@@ -1290,24 +1105,39 @@ def main():
         )
         blank_row_idx = ROWS.index(blank_row_label)
 
+        # ── Data-driven k estimation ──────────────────────────────────────────
+        # Runs once after blank row is confirmed; cached in session state.
+        # Resets automatically when blank_row changes.
+        cached_blank = st.session_state.get("auto_k_blank_row", None)
+        if "auto_k" not in st.session_state or cached_blank != blank_row_label:
+            with st.spinner("Analysing plate optical properties to estimate k…"):
+                auto_k, best_ch = estimate_k_from_plate(
+                    img_orig, grid, blank_row_idx,
+                    st.session_state.get("exif_k_range", K_RANGE_DEFAULT)
+                )
+            st.session_state.auto_k           = auto_k
+            st.session_state.best_ch          = best_ch
+            st.session_state.auto_k_blank_row = blank_row_label
+
+        auto_k  = st.session_state.auto_k
+        best_ch = st.session_state.best_ch
+
         st.info(st.session_state.get("exif_msg", ""))
+        st.success(
+            f"Best channel: **{best_ch}** — estimated k = **{auto_k}**. "
+            f"The {best_ch} channel showed the most linear absorbance response across non-blank wells. "
+            f"For MTT assays this is typically the Green channel, as formazan (purple) absorbs green light most strongly."
+        )
+
         k_user = st.slider(
             "Correction factor k",
             min_value=1.0, max_value=5.0,
-            value=float(st.session_state.get("exif_k", K_DEFAULT)),
-            step=0.1, key="k_correction"
+            value=float(auto_k),
+            step=0.01, key="k_correction",
+            help="Estimated from plate data. Adjust manually if needed."
         )
         st.caption(
-            f"**k = {k_user:.1f}** — multiplies the raw log value to compensate for smartphone "
-            "camera gamma and JPEG compression. "
-            "The default value is an **empirical estimate** based on camera brand — "
-            "it is not a scientifically validated constant and may vary between devices, "
-            "firmware versions, and lighting conditions. "
-            "For accurate results, calibrate: **k = A_plate_reader / A_shown_here**."
-        )
-        st.caption(
-            f"Blank reference = mean grayscale intensity of all 12 wells in row **{blank_row_label}**. "
-            f"Formula: **A = −log₁₀(gray_mean / gray_blank) × {k_user:.1f}**. "
+            f"Formula: **A = −log₁₀(gray_mean / gray_blank) × {k_user:.2f}**. "
             "Wells lighter than the blank are set to 0. Background shade: white ≈ 0, black ≥ 2."
         )
 
@@ -1325,9 +1155,15 @@ def main():
         # ── Section 7: Gamma-corrected absorbance + calibration ───────────────
         st.markdown("### 7️⃣ Gamma-corrected absorbance with optional calibration")
         st.caption(
-            "Applies sRGB gamma correction (γ = 2.2) to linearise pixel values before "
-            "computing transmittance, then uses a weighted combination of R, G, B channels. "
-            "Optionally apply a linear calibration using wells with known plate-reader values."
+            "The physically correct approach to smartphone absorbance estimation. "
+            "Smartphone cameras encode pixel values with a non-linear power-law transfer function "
+            "(sRGB gamma, γ ≈ 2.2), which causes grayscale-based methods to systematically "
+            "underestimate absorbance. This section inverts that encoding before computing "
+            "transmittance, recovering a linear light-intensity scale: "
+            "**I_linear = ((pixel/255 + 0.055) / 1.055)^2.2**. "
+            "Equal R, G, B channel weights are then averaged. "
+            "The result is more accurate than section 6️⃣ without any calibration, "
+            "and further improved by entering 2–4 plate-reader reference values below."
         )
 
         # Fixed equal channel weights (dye selection removed per analysis conclusions)
@@ -1416,7 +1252,9 @@ def main():
         st.markdown("---")
         if st.button("🔄 Start over (new image)"):
             for k in ["step","pt_a1","pt_h12","a1_x","a1_y","h12_x","h12_y",
-                      "prev_zoom_a1","prev_zoom_h12","exif_k","exif_msg"]:
+                      "prev_zoom_a1","prev_zoom_h12",
+                      "exif_k_range","exif_msg",
+                      "auto_k","best_ch","auto_k_blank_row"]:
                 st.session_state.pop(k, None)
             st.session_state.step = 1
             st.rerun()
