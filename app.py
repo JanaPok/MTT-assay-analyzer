@@ -980,8 +980,13 @@ def main():
     # Mobile-friendly CSS overrides
     st.markdown("""
     <style>
-      .block-container { padding:1rem 0.6rem 2rem !important; max-width:100% !important; }
-      h1  { font-size:1.35rem !important; }
+      .block-container {
+        padding-top: 3rem !important;
+        padding-left: 0.6rem !important;
+        padding-right: 0.6rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 100% !important;
+      }
       h2, h3 { font-size:1.05rem !important; }
       .stButton>button, .stDownloadButton>button {
         width:100%; padding:0.8rem; font-size:1rem; border-radius:10px; margin-top:4px;
@@ -992,7 +997,7 @@ def main():
     """, unsafe_allow_html=True)
 
     st.markdown(
-        "<h1 style='padding-top:1.1rem; margin-top:0; line-height:1.3;'>"
+        "<h1 style='font-size:1.35rem; line-height:1.4; margin-top:0; padding-top:0;'>"
         "🧪 MTT Assay Analyzer</h1>",
         unsafe_allow_html=True
     )
