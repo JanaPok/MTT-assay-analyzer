@@ -1012,23 +1012,27 @@ def main():
 
         colors_raw, _, _ = build_results(img_array, grid)  # sample colors once
 
+        # ── Blank / reference row selection (shared by all sections 4–7) ─────
+        st.markdown("---")
+        blank_row_label = st.selectbox(
+            "Blank row (reference row — used for Euclidean distances, "
+            "pseudo-absorbance reference, and absorbance calculations)",
+            options=ROWS, index=0, key="blank_row"
+        )
+        blank_row_idx = ROWS.index(blank_row_label)
+        st.markdown("---")
+
         # ── Section 4: Euclidean distances ────────────────────────────────────
         st.markdown("### 4️⃣ Euclidean distances from reference row")
 
-        ref_row_label_dist = st.selectbox(
-            "Reference row for Euclidean distances",
-            options=ROWS, index=0, key="ref_row_dist"
-        )
-        ref_row_idx_dist = ROWS.index(ref_row_label_dist)
+        colors, dist_df, ref_rgb = build_results(img_array, grid, blank_row_idx)
 
-        colors, dist_df, ref_rgb = build_results(img_array, grid, ref_row_idx_dist)
-
-        st.markdown(color_table_html(colors, dist_df, ref_rgb, ref_row_label_dist),
+        st.markdown(color_table_html(colors, dist_df, ref_rgb, blank_row_label),
                     unsafe_allow_html=True)
         st.caption(
             f"Each cell = Euclidean RGB distance from the luminance-weighted mean RGB "
-            f"of row **{ref_row_label_dist}** (all 12 wells). "
-            f"Row {ref_row_label_dist} is highlighted with a red border."
+            f"of row **{blank_row_label}** (all 12 wells). "
+            f"Row {blank_row_label} is highlighted with a red border."
         )
 
         dist_xlsx = export_distances_excel(colors, dist_df, ref_rgb)
@@ -1054,13 +1058,7 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # ── Blank row selection (shared by sections 6 and 7) ─────────────────
         st.markdown("---")
-        blank_row_label = st.selectbox(
-            "Blank row (lightest row = unabsorbed light reference)",
-            options=ROWS, index=0, key="blank_row"
-        )
-        blank_row_idx = ROWS.index(blank_row_label)
 
         # ── Shared calibration input (used by both sections 6 and 7) ─────────
         st.markdown("#### 🔬 Calibration reference wells (optional, shared by sections 6 and 7)")
