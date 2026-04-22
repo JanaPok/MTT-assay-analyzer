@@ -1,6 +1,6 @@
 # MTT Assay Analyzer
 
-A mobile-friendly, hardware-free web application for quantitative colorimetric analysis of MTT assay 96-well plates using an ordinary smartphone photograph.
+Web application for quantitative colorimetric analysis of MTT assay 96-well plates using an ordinary smartphone photograph.
 
 > **No plate reader required.** Upload a photo, align two wells, and receive a full suite of colorimetric outputs — directly in your browser on any device.
 
@@ -21,7 +21,7 @@ The application is built with [Streamlit](https://streamlit.io), runs fully in-b
 | **Automatic well detection** | Mark wells A1 and H12; remaining 94 positions interpolated automatically |
 | **Interactive zoom** | Up to 600 % zoom for precise crosshair placement on small screens |
 | **EXIF camera detection** | Reads camera brand from photo metadata and suggests an appropriate correction factor |
-| **7 analysis outputs** | From RGB distances to gamma-corrected calibrated absorbance |
+| **6 analysis outputs** | From RGB distances to gamma-corrected calibrated absorbance |
 | **Excel export** | Every table downloadable as a formatted `.xlsx` file with coloured cell backgrounds |
 | **Optional calibration** | Enter 2–4 plate-reader reference values; app fits a linear model and calibrates all wells |
 
@@ -43,7 +43,7 @@ The app overlays all 96 detected positions on the image for visual verification 
 
 ### Step 4 — Read the results
 
-Seven tables are computed automatically:
+Six tables are computed automatically:
 
 #### 4️⃣ Euclidean RGB distances from reference row
 The user selects which row serves as the reference (typically the blank/control row). Each cell contains the Euclidean distance in RGB space between that well and the luminance-weighted mean RGB of all 12 wells in the selected reference row:
@@ -72,19 +72,21 @@ The blank row (the lightest row, typically the negative control) is selected by 
 
 > **Note:** The default *k* values per brand are empirical estimates, not scientifically validated constants. For accurate results, calibrate: *k = A_plate_reader / A_shown_here*.
 
-#### 7️⃣ Gamma-corrected absorbance with optional calibration
+#### 7️⃣ Gamma-corrected green-channel absorbance with optional calibration
 
-Applies the full sRGB gamma correction before computing transmittance, using equal weights across R, G, B channels:
+Linearises the green channel pixel values using a power-law inverse gamma correction, then computes transmittance relative to the blank row:
 
 ```
-I_linear = ((pixel/255 + 0.055) / 1.055)^2.2   ← invert sRGB gamma
-T_eff    = mean(T_R, T_G, T_B)                  ← mean transmittance
-A        = −log₁₀(T_eff)
+I_G  = (G / 255) ^ γ_eff          ← power-law linearisation, green channel only
+T_G  = I_G_well / I_G_blank        ← transmittance relative to blank
+A    = −log₁₀(T_G)
 ```
 
-**Optional linear calibration:** Enter 2–4 wells whose absorbance you measured on a plate reader (non-blank wells only). The app fits `A_cal = slope × A_raw + intercept` and applies it to all wells. The blank row is automatically excluded from calibration point selection.
+The green channel is used exclusively because MTT formazan absorbs most strongly in the green spectral region (λ_max ≈ 570 nm), maximising signal-to-noise ratio. The effective gamma γ_eff is derived from the correction factor *k* (section 6) via γ_eff = k × 0.638, and can be adjusted with a slider.
 
-> Based on experimental validation across four independent plates, this approach achieves Pearson r > 0.99 and R² > 0.99 compared to a commercial spectrophotometer under standardised imaging conditions.
+**Optional linear calibration (shared by sections 6 and 7):** Enter 2–4 wells whose absorbance you measured on a plate reader (non-blank wells only). The app fits `A_cal = slope × A_raw + intercept` and applies it to all wells. The blank row is automatically excluded from calibration point selection.
+
+> Based on experimental validation across five independent experiments (n = 372 non-blank wells), the calibrated grayscale method achieves Pearson r = 0.991 and R² = 0.983 compared to a commercial spectrophotometer under standardised imaging conditions.
 
 ---
 
@@ -108,18 +110,6 @@ The app opens automatically at `http://localhost:8501`.
 
 ---
 
-## Online access
-
-The app is deployed on Streamlit Cloud — no installation needed:
-
-> 🔗 **[mic-ana.streamlit.app](https://mic-ana.streamlit.app)**
-> *(update this link after deploying)*
-
-**iPhone:** Safari → Share → "Add to Home Screen"  
-**Android:** Chrome → Menu → "Add to Home Screen"
-
----
-
 ## Dependencies
 
 | Package | Version | Purpose |
@@ -139,6 +129,7 @@ The app is deployed on Streamlit Cloud — no installation needed:
 - **Gamma and EXIF correction factors** are empirical estimates based on camera brand. They may vary between firmware versions and shooting conditions. For quantitative results, always calibrate against at least two plate-reader reference values.
 - **Well detection** relies on manual alignment of two corner wells. Plates that are significantly rotated or perspective-distorted may produce less accurate grids. Photograph the plate as flat-on as possible.
 - The sampling region is fixed at **11 × 11 pixels** around each well centre. For very small or irregularly spaced wells, or very low-resolution photographs, this may include pixels outside the well boundary.
+- The application has been validated for **MTT formazan** only. Other colorimetric dyes with different absorption maxima may require adjustment of the correction parameters *k* and γ_eff.
 
 ---
 
@@ -153,8 +144,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 If you use MTT Assay Analyzer in your research, please cite:
 
 ```
-JanaPok. (2026). MTT Assay Analyzer (Version 1.0) [Software].
-GitHub. https://github.com/JanaPok/MTT-assay-analyzer
+Pokorná, J. (2026). MTT Assay Analyzer (Version 1.0) [Software]. Zenodo.
+https://doi.org/10.5281/zenodo.19467292
 ```
 
 ---
